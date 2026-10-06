@@ -1,8 +1,8 @@
 === QC-VORONOI: Phase 2 - Spatial Quality Control ===
-Compiled on: 2026-10-06T18:55:29.190698
+Compiled on: 2026-10-06T19:47:15.914257
 
 ======================================================================
-# NOTEBOOK: 2.1 - Spatial QC - Delaunay Triangulation and Neighbor Mapping.ipynb
+# NOTEBOOK: 2.1 - Quality Control - Delaunay Triangulation and Neighbor Mapping.ipynb
 ======================================================================
 
 # --- Code Cell 2 ---

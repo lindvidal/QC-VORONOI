@@ -1,5 +1,5 @@
 === QC-VORONOI: Phase 3 - Parameter Optimization ===
-Compiled on: 2026-10-06T18:55:29.191035
+Compiled on: 2026-10-06T19:47:15.914581
 
 ======================================================================
 # NOTEBOOK: 3.1 - Optimization - P1 and P2 Multiplier Fine-Tuning.ipynb
