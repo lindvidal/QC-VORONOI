@@ -1,5 +1,5 @@
 Hash|Date|Author|Message
-dc82f65|2026-10-06|Lindemberg Vidal|"v0004 | chore(governance): standardize commit messages to ordinal v0000 format"
+24fac81|2026-10-06|Lindemberg Vidal|"v0004 | chore(governance): standardize commit messages to ordinal v0000 format"
 d1a4e42|2026-10-06|Lindemberg Vidal|"v0003 | chore(governance): add auto-commit and push policy rule"
 37c84df|2026-10-06|Lindemberg Vidal|"v0002 | feat(pipeline): implement multi-stage notebook suite, UNIPLU parquet loader, and governance services"
 6274ac7|2026-07-11|Lindemberg Vidal|"v0001 | chore(init): initial QC-VORONOI project scaffold"

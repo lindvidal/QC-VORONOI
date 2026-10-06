@@ -20,28 +20,40 @@ build/
 # Data
 *.h5
 *.hdf5
-src/data/UNIPLU/*.zip
-src/data/UNIPLU/.cache*
-
-
-# Pipeline log
-src/pipeline.log
-
-# Results / Figures / Archives (generated)
-src/results/*
-src/figures/*
+*.zip
+*.parquet
+src/data/UNIPLU/
+src/1 - Organized data/
+src/2 - Organized data gauge/
+src/3 - Shapefiles/
 src/data/parquet/
+.cache*/
+*.cache*
+
+# Generated Results & Figures
+src/4 - Figures/*
+!src/4 - Figures/.gitkeep
+src/5 - Results/*
+!src/5 - Results/.gitkeep
+src/results/*
 !src/results/.gitkeep
+src/figures/*
 !src/figures/.gitkeep
+
+# Pipeline Logs & Temporary
+src/pipeline.log
+archive/
+*/archive/
 
 # OS
 Thumbs.db
 .DS_Store
 
-# Environment
+# Environment & Virtualenvs
 .env
 venv/
 .venv/
-/old reference
-/old reference
-/old reference
+
+# Reference/Legacy Backup
+/old reference/
+
