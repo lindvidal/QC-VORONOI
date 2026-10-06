@@ -3,6 +3,7 @@ from pathlib import Path
 # Paths — resolve root relative to this file's location (src/config.py → project root)
 ROOT = Path(__file__).resolve().parent.parent
 HDF5_PATH = ROOT / "2 - Organized data gauge" / "UNIPLU_DAILY_2014_2025.h5"
+UNIPLU_DIR = ROOT / "src" / "data" / "UNIPLU"
 RESULTS_DIR = ROOT / "src" / "results"
 FIGURES_DIR = ROOT / "src" / "figures"
 PARQUET_DIR = ROOT / "src" / "data" / "parquet"

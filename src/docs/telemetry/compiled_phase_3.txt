@@ -1,0 +1,147 @@
+=== QC-VORONOI: Phase 3 - Parameter Optimization ===
+Compiled on: 2026-10-06T18:55:29.191035
+
+======================================================================
+# NOTEBOOK: 3.1 - Optimization - P1 and P2 Multiplier Fine-Tuning.ipynb
+======================================================================
+
+# --- Code Cell 2 ---
+%config Completer.use_jedi = False
+%load_ext autoreload
+%autoreload 2
+
+import sys, os, warnings
+from pathlib import Path
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+warnings.filterwarnings('ignore')
+
+PROJECT_ROOT = Path.cwd() if Path.cwd().name == 'src' else Path.cwd() / 'src'
+sys.path.insert(0, str(PROJECT_ROOT.parent))
+
+from src.config import ROOT, P1_VALUES, P2_VALUES
+from src.qc.spatial import ConfusionMatrix
+from src.utils.logger import save_result, save_figure
+
+RESULTS_DIR = ROOT / 'src' / '5 - Results'
+FIGURES_DIR = ROOT / 'src' / '4 - Figures'
+FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+
+# --- Code Cell 4 ---
+df_props = pd.read_parquet(RESULTS_DIR / 'annual_gauge_properties.parquet')
+df_neighbors = pd.read_parquet(RESULTS_DIR / 'gauge_delaunay_neighbors.parquet')
+df_valid_neigh = df_neighbors[~df_neighbors['is_boundary']].copy()
+print('P1 grid:', P1_VALUES)
+print('P2 grid:', P2_VALUES)
+
+# --- Code Cell 6 ---
+tuning_results = []
+
+for p1 in P1_VALUES:
+    for p2 in P2_VALUES:
+        cm = ConfusionMatrix()
+        for idx, row in df_props.iterrows():
+            # Ground truth: se cumpriu consistência climática básica
+            y_true = 'HQ' if row.get('is_reference', True) else 'LQ'
+            
+            # Simulação do fator chuva anual
+            # (em pipeline completo, calcula frente à média dos vizinhos)
+            y_pred = 'HQ' if (300 * p2 <= row['yearly_rainfall'] <= 3000 * p1) else 'LQ'
+            
+            if y_true == 'HQ' and y_pred == 'HQ': cm.tp += 1
+            elif y_true == 'LQ' and y_pred == 'HQ': cm.fp += 1
+            elif y_true == 'LQ' and y_pred == 'LQ': cm.tn += 1
+            elif y_true == 'HQ' and y_pred == 'LQ': cm.fn += 1
+            
+        tuning_results.append({
+            'p1': p1,
+            'p2': p2,
+            'precision': round(cm.precision, 4),
+            'recall': round(cm.recall, 4),
+            'accuracy': round(cm.accuracy, 4),
+            'f1': round(cm.f1, 4)
+        })
+
+df_tuning = pd.DataFrame(tuning_results)
+print('Melhores combinações por F1-Score:')
+print(df_tuning.sort_values('f1', ascending=False).head(5))
+
+# --- Code Cell 8 ---
+fig, ax = plt.subplots(figsize=(8, 5))
+pivot_f1 = df_tuning.pivot(index='p2', columns='p1', values='f1')
+cax = ax.matshow(pivot_f1, cmap='viridis')
+fig.colorbar(cax)
+ax.set_xticks(range(len(pivot_f1.columns)))
+ax.set_xticklabels(pivot_f1.columns)
+ax.set_yticks(range(len(pivot_f1.index)))
+ax.set_yticklabels(pivot_f1.index)
+ax.set_xlabel('P1 (Fator Superior)')
+ax.set_ylabel('P2 (Fator Inferior)')
+ax.set_title('Superfície de Sensibilidade F1-Score (P1 vs P2)')
+save_figure(fig, 'p1_p2_sensitivity_surface.png', subdir='4 - Figures')
+plt.show()
+
+save_result(df_tuning, 'p1_p2_tuning_metrics.parquet', subdir='5 - Results')
+
+======================================================================
+# NOTEBOOK: 3.2 - Optimization - Multi-MIT and Hybrid Factor Analysis.ipynb
+======================================================================
+
+# --- Code Cell 2 ---
+%config Completer.use_jedi = False
+%load_ext autoreload
+%autoreload 2
+
+import sys, os, warnings
+from pathlib import Path
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+warnings.filterwarnings('ignore')
+
+PROJECT_ROOT = Path.cwd() if Path.cwd().name == 'src' else Path.cwd() / 'src'
+sys.path.insert(0, str(PROJECT_ROOT.parent))
+
+from src.config import ROOT, MITS_MINUTES
+from src.utils.logger import save_result, save_figure
+
+RESULTS_DIR = ROOT / 'src' / '5 - Results'
+FIGURES_DIR = ROOT / 'src' / '4 - Figures'
+
+# --- Code Cell 4 ---
+df_qc = pd.read_parquet(RESULTS_DIR / 'qc_classification_results.parquet')
+print('Distribuição por MIT:')
+print(df_qc.groupby('mit_minutes')['hybrid_quality'].value_counts())
+
+# --- Code Cell 6 ---
+factors = ['yearly_rainfall_quality', 'rainfall_event_quality', 'rainfall_intensity_quality', 'rainfall_duration_quality', 'hybrid_quality']
+summary_by_mit = []
+
+for mit_val in df_qc['mit_minutes'].unique():
+    subset = df_qc[df_qc['mit_minutes'] == mit_val]
+    for factor in factors:
+        hq_pct = (subset[factor] == 'HQ').mean() * 100
+        summary_by_mit.append({
+            'mit_minutes': mit_val,
+            'factor': factor,
+            'hq_percentage': round(hq_pct, 2)
+        })
+
+df_comp = pd.DataFrame(summary_by_mit)
+df_pivot = df_comp.pivot(index='factor', columns='mit_minutes', values='hq_percentage')
+print(df_pivot)
+
+# --- Code Cell 8 ---
+fig, ax = plt.subplots(figsize=(10, 5))
+df_pivot.plot(kind='bar', ax=ax)
+ax.set_ylabel('% Estações Classificadas como HQ')
+ax.set_title('Sensibilidade dos Fatores de Qualidade por MIT')
+ax.grid(axis='y', linestyle='--', alpha=0.7)
+plt.xticks(rotation=30, ha='right')
+save_figure(fig, 'factors_comparison_by_mit.png', subdir='4 - Figures')
+plt.show()
+
+save_result(df_comp, 'mit_factors_summary.parquet', subdir='5 - Results')

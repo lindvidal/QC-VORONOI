@@ -1,0 +1,158 @@
+=== QC-VORONOI: Phase 1 - Data Engineering ===
+Compiled on: 2026-10-06T18:55:29.190035
+
+======================================================================
+# NOTEBOOK: 1.1 - Data Engineering - UNIPLU Preparation and Event Extraction.ipynb
+======================================================================
+
+# --- Code Cell 2 ---
+%config Completer.use_jedi = False
+%load_ext autoreload
+%autoreload 2
+
+import sys, os, warnings
+from pathlib import Path
+import pandas as pd
+import numpy as np
+
+warnings.filterwarnings('ignore')
+
+# Root setup
+PROJECT_ROOT = Path.cwd() if Path.cwd().name == 'src' else Path.cwd() / 'src'
+sys.path.insert(0, str(PROJECT_ROOT.parent))
+
+from src.config import ROOT, UNIPLU_DIR, MITS_MINUTES, MINIMUM_DEPTH_MM
+from src.data.loader import load_gauge_info, load_rainfall_data
+from src.events.detection import determine_rainfall_events, compute_rainfall_time_step
+from src.utils.logger import save_result
+
+RESULTS_DIR = ROOT / 'src' / '5 - Results'
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+print('UNIPLU Dir:', UNIPLU_DIR)
+print('Results Dir:', RESULTS_DIR)
+
+# --- Code Cell 4 ---
+df_info = load_gauge_info()
+print('Total de estações cadastradas:', len(df_info))
+print('Redes de monitoramento:')
+print(df_info['network'].value_counts())
+df_info.head()
+
+# --- Code Cell 6 ---
+TARGET_YEARS = [2023, 2024]
+TARGET_STATES = ['SP']  # Altere para os estados desejados ou None para todos
+SAMPLE_STATIONS = 50   # Amostra para processamento rápido (ou None para todas)
+
+print('Anos:', TARGET_YEARS)
+print('Estados:', TARGET_STATES)
+print('MITs:', MITS_MINUTES)
+
+# --- Code Cell 8 ---
+all_events_list = []
+
+for year in TARGET_YEARS:
+    print(f'=== Processando Ano {year} ===')
+    df_rain = load_rainfall_data(
+        states=TARGET_STATES,
+        years=[year],
+        sample=SAMPLE_STATIONS,
+        seed=42
+    )
+    if df_rain.empty:
+        print('Sem dados para o ano', year)
+        continue
+    print(f'Registros: {len(df_rain):,} | Estações: {df_rain["gauge_code"].nunique()}')
+
+    for code_val, group in df_rain.groupby('gauge_code'):
+        group_sorted = group.sort_values('datetime').reset_index(drop=True)
+        if len(group_sorted) < 2:
+            continue
+        time_step = compute_rainfall_time_step(group_sorted)
+        rain_pos = group_sorted[group_sorted['rain_mm'] > 0].reset_index(drop=True)
+        if len(rain_pos) < 2:
+            continue
+        for mit_val in MITS_MINUTES:
+            mit_td = pd.Timedelta(minutes=mit_val)
+            events = determine_rainfall_events(mit_td, rain_pos, time_step)
+            if not events.empty:
+                events = events[events['rain_mm'] >= MINIMUM_DEPTH_MM].copy()
+                events['year'] = year
+                events['mit_minutes'] = mit_val
+                all_events_list.append(events)
+
+if all_events_list:
+    df_events = pd.concat(all_events_list, ignore_index=True)
+    print(f'Total de eventos detectados: {len(df_events):,}')
+else:
+    df_events = pd.DataFrame()
+    print('Nenhum evento detectado.')
+
+# --- Code Cell 10 ---
+if not df_events.empty:
+    out_file = save_result(df_events, 'events_table.parquet', subdir='5 - Results')
+    print('Salvo em:', out_file)
+    print(df_events.head())
+
+======================================================================
+# NOTEBOOK: 1.2 - Data Engineering - Gauge Summary and Valid Days.ipynb
+======================================================================
+
+# --- Code Cell 2 ---
+%config Completer.use_jedi = False
+%load_ext autoreload
+%autoreload 2
+
+import sys, os, warnings
+from pathlib import Path
+import pandas as pd
+import numpy as np
+
+warnings.filterwarnings('ignore')
+
+PROJECT_ROOT = Path.cwd() if Path.cwd().name == 'src' else Path.cwd() / 'src'
+sys.path.insert(0, str(PROJECT_ROOT.parent))
+
+from src.config import ROOT, ANNUAL_RAIN_MIN, ANNUAL_RAIN_MAX, MIN_DAY_COUNT, MITS_MINUTES
+from src.data.loader import load_gauge_info, load_rainfall_data
+from src.events.detection import compute_event_statistics, count_valid_days
+from src.utils.logger import save_result
+
+RESULTS_DIR = ROOT / 'src' / '5 - Results'
+
+# --- Code Cell 4 ---
+events_path = RESULTS_DIR / 'events_table.parquet'
+df_events = pd.read_parquet(events_path)
+print(f'Eventos carregados: {len(df_events):,}')
+df_info = load_gauge_info()
+df_events.head()
+
+# --- Code Cell 6 ---
+gauge_info_dict = df_info.set_index('gauge_code').to_dict('index')
+summary_records = []
+
+grouped = df_events.groupby(['gauge_code', 'year', 'mit_minutes'])
+for (code_val, year_val, mit_val), group in grouped:
+    info = gauge_info_dict.get(str(code_val))
+    if not info:
+        continue
+    info_series = pd.Series(info)
+    info_series['gauge_code'] = str(code_val)
+    stats = compute_event_statistics(group, info_series, mit_val)
+    if stats:
+        stats['year'] = year_val
+        summary_records.append(stats)
+
+df_annual_props = pd.DataFrame(summary_records)
+print(f'Total de resumos anuais por estação/MIT: {len(df_annual_props):,}')
+df_annual_props.head()
+
+# --- Code Cell 8 ---
+df_annual_props['is_reference'] = (
+    (df_annual_props['yearly_rainfall'] >= ANNUAL_RAIN_MIN) &
+    (df_annual_props['yearly_rainfall'] <= ANNUAL_RAIN_MAX)
+)
+print('Estações de Referência por MIT:')
+print(df_annual_props.groupby('mit_minutes')['is_reference'].value_counts())
+
+out_path = save_result(df_annual_props, 'annual_gauge_properties.parquet', subdir='5 - Results')
+print('Propriedades anuais salvas em:', out_path)

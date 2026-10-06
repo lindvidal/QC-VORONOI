@@ -20,6 +20,9 @@ build/
 # Data
 *.h5
 *.hdf5
+src/data/UNIPLU/*.zip
+src/data/UNIPLU/.cache*
+
 
 # Pipeline log
 src/pipeline.log

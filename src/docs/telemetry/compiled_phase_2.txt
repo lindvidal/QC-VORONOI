@@ -1,0 +1,180 @@
+=== QC-VORONOI: Phase 2 - Spatial Quality Control ===
+Compiled on: 2026-10-06T18:55:29.190698
+
+======================================================================
+# NOTEBOOK: 2.1 - Spatial QC - Delaunay Triangulation and Neighbor Mapping.ipynb
+======================================================================
+
+# --- Code Cell 2 ---
+%config Completer.use_jedi = False
+%load_ext autoreload
+%autoreload 2
+
+import sys, os, warnings
+from pathlib import Path
+import pandas as pd
+import numpy as np
+from scipy.spatial import Delaunay
+from shapely.geometry import Point, Polygon
+
+warnings.filterwarnings('ignore')
+
+PROJECT_ROOT = Path.cwd() if Path.cwd().name == 'src' else Path.cwd() / 'src'
+sys.path.insert(0, str(PROJECT_ROOT.parent))
+
+from src.config import ROOT
+from src.utils.logger import save_result
+
+RESULTS_DIR = ROOT / 'src' / '5 - Results'
+
+# --- Code Cell 4 ---
+props_path = RESULTS_DIR / 'annual_gauge_properties.parquet'
+df_props = pd.read_parquet(props_path)
+coords_df = df_props[['gauge_code', 'latitude', 'longitude']].drop_duplicates().dropna()
+coords_df = coords_df.reset_index(drop=True)
+print(f'Total de estações com coordenadas válidas: {len(coords_df):,}')
+coords_df.head()
+
+# --- Code Cell 6 ---
+neighbors_records = []
+n_total = len(coords_df)
+
+for idx, row in coords_df.iterrows():
+    target_code = row['gauge_code']
+    target_pt = Point(row['longitude'], row['latitude'])
+    
+    # Base reduzida excluindo a própria estação alvo
+    ref_df = coords_df[coords_df['gauge_code'] != target_code].reset_index(drop=True)
+    if len(ref_df) < 3:
+        continue
+    
+    pts = ref_df[['longitude', 'latitude']].values
+    try:
+        tri = Delaunay(pts)
+        s_idx = tri.find_simplex(np.array([[target_pt.x, target_pt.y]]))[0]
+        if s_idx >= 0:
+            vertex_indices = tri.simplices[s_idx]
+            neighbor_codes = ref_df.iloc[vertex_indices]['gauge_code'].tolist()
+            neighbors_records.append({
+                'gauge_code': target_code,
+                'neighbor_1': neighbor_codes[0],
+                'neighbor_2': neighbor_codes[1],
+                'neighbor_3': neighbor_codes[2],
+                'is_boundary': False
+            })
+        else:
+            neighbors_records.append({
+                'gauge_code': target_code,
+                'neighbor_1': None,
+                'neighbor_2': None,
+                'neighbor_3': None,
+                'is_boundary': True
+            })
+    except Exception:
+        pass
+
+df_neighbors = pd.DataFrame(neighbors_records)
+print(f'Mapeamento concluído: {len(df_neighbors):,} estações')
+print('Estações de borda:', df_neighbors['is_boundary'].value_counts().to_dict())
+df_neighbors.head()
+
+# --- Code Cell 8 ---
+out_path = save_result(df_neighbors, 'gauge_delaunay_neighbors.parquet', subdir='5 - Results')
+print('Salvo em:', out_path)
+
+======================================================================
+# NOTEBOOK: 2.2 - Quality Control - Point-Out Property Evaluation.ipynb
+======================================================================
+
+# --- Code Cell 2 ---
+%config Completer.use_jedi = False
+%load_ext autoreload
+%autoreload 2
+
+import sys, os, warnings
+from pathlib import Path
+import pandas as pd
+import numpy as np
+
+warnings.filterwarnings('ignore')
+
+PROJECT_ROOT = Path.cwd() if Path.cwd().name == 'src' else Path.cwd() / 'src'
+sys.path.insert(0, str(PROJECT_ROOT.parent))
+
+from src.config import ROOT, QUALITY_FACTORS, QUALITY_THRESHOLD
+from src.utils.logger import save_result
+
+RESULTS_DIR = ROOT / 'src' / '5 - Results'
+
+# --- Code Cell 4 ---
+df_props = pd.read_parquet(RESULTS_DIR / 'annual_gauge_properties.parquet')
+df_neighbors = pd.read_parquet(RESULTS_DIR / 'gauge_delaunay_neighbors.parquet')
+df_valid_neighbors = df_neighbors[~df_neighbors['is_boundary']].copy()
+print(f'Estações avaliáveis com circunvizinhos: {len(df_valid_neighbors):,}')
+
+# --- Code Cell 6 ---
+P1_DEFAULT = 1.60
+P2_DEFAULT = 0.80
+
+props_index = df_props.set_index(['gauge_code', 'year', 'mit_minutes'])
+qc_eval_records = []
+
+for (code_val, year_val, mit_val), row in df_props.iterrows():
+    target_code = row['gauge_code']
+    neigh_match = df_valid_neighbors[df_valid_neighbors['gauge_code'] == target_code]
+    if neigh_match.empty:
+        continue
+    
+    n_codes = [neigh_match.iloc[0]['neighbor_1'], neigh_match.iloc[0]['neighbor_2'], neigh_match.iloc[0]['neighbor_3']]
+    neigh_rows = df_props[
+        (df_props['gauge_code'].isin(n_codes)) &
+        (df_props['year'] == row['year']) &
+        (df_props['mit_minutes'] == row['mit_minutes'])
+    ]
+    if len(neigh_rows) < 2:
+        continue
+    
+    record = {
+        'gauge_code': target_code,
+        'year': row['year'],
+        'mit_minutes': row['mit_minutes'],
+        'p1': P1_DEFAULT,
+        'p2': P2_DEFAULT,
+    }
+    
+    hq_count = 0
+    # 1. Yearly rainfall
+    mu_rain = neigh_rows['yearly_rainfall'].mean()
+    q_rain = 'HQ' if (P2_DEFAULT * mu_rain <= row['yearly_rainfall'] <= P1_DEFAULT * mu_rain) else 'LQ'
+    record['yearly_rainfall_quality'] = q_rain
+    hq_count += (q_rain == 'HQ')
+    
+    # 2. Rainfall events
+    mu_events = neigh_rows['rainfall_events'].mean()
+    q_ev = 'HQ' if (P2_DEFAULT * mu_events <= row['rainfall_events'] <= P1_DEFAULT * mu_events) else 'LQ'
+    record['rainfall_event_quality'] = q_ev
+    hq_count += (q_ev == 'HQ')
+    
+    # 3. Rainfall intensity
+    mu_int = neigh_rows['mean_rainfall_intensity'].mean()
+    q_int = 'HQ' if (P2_DEFAULT * mu_int <= row['mean_rainfall_intensity'] <= P1_DEFAULT * mu_int) else 'LQ'
+    record['rainfall_intensity_quality'] = q_int
+    hq_count += (q_int == 'HQ')
+    
+    # 4. Rainfall duration
+    mu_dur = neigh_rows['mean_rainfall_duration'].mean()
+    q_dur = 'HQ' if (P2_DEFAULT * mu_dur <= row['mean_rainfall_duration'] <= P1_DEFAULT * mu_dur) else 'LQ'
+    record['rainfall_duration_quality'] = q_dur
+    hq_count += (q_dur == 'HQ')
+    
+    record['hybrid_quality'] = 'HQ' if hq_count >= QUALITY_THRESHOLD else 'LQ'
+    record['is_reference'] = row.get('is_reference', True)
+    qc_eval_records.append(record)
+
+df_qc_eval = pd.DataFrame(qc_eval_records)
+print(f'Avaliação concluída: {len(df_qc_eval):,} registros')
+print(df_qc_eval['hybrid_quality'].value_counts())
+
+# --- Code Cell 8 ---
+out_path = save_result(df_qc_eval, 'qc_classification_results.parquet', subdir='5 - Results')
+print('Salvo em:', out_path)

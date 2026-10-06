@@ -1,0 +1,111 @@
+=== QC-VORONOI: Phase 4 - Statistical Analytics and Validation ===
+Compiled on: 2026-10-06T18:55:29.191345
+
+======================================================================
+# NOTEBOOK: 4.1 - Analytics - Statistical Validation (Bootstrap and McNemar).ipynb
+======================================================================
+
+# --- Code Cell 2 ---
+%config Completer.use_jedi = False
+%load_ext autoreload
+%autoreload 2
+
+import sys, os, warnings
+from pathlib import Path
+import pandas as pd
+import numpy as np
+
+warnings.filterwarnings('ignore')
+
+PROJECT_ROOT = Path.cwd() if Path.cwd().name == 'src' else Path.cwd() / 'src'
+sys.path.insert(0, str(PROJECT_ROOT.parent))
+
+from src.config import ROOT
+from src.qc.validation import bootstrap_ci, mcnemar_test
+from src.utils.logger import save_result
+
+RESULTS_DIR = ROOT / 'src' / '5 - Results'
+
+# --- Code Cell 4 ---
+df_qc = pd.read_parquet(RESULTS_DIR / 'qc_classification_results.parquet')
+df_qc.head()
+
+# --- Code Cell 6 ---
+y_true = np.where(df_qc['is_reference'], 1, 0)
+y_pred_hybrid = np.where(df_qc['hybrid_quality'] == 'HQ', 1, 0)
+
+def acc_metric(yt, yp):
+    return np.mean(yt == yp)
+
+ci_acc = bootstrap_ci(y_true, y_pred_hybrid, acc_metric, n_iter=2000, ci=0.95)
+print('IC 95% Acurácia (Modelo Híbrido):', ci_acc)
+
+# --- Code Cell 8 ---
+y_pred_single = np.where(df_qc['yearly_rainfall_quality'] == 'HQ', 1, 0)
+mcnemar_res = mcnemar_test(y_true, y_pred_hybrid, y_pred_single)
+print('Teste de McNemar (Híbrido vs Chuva Anual Isolada):')
+print('Estatística chi2:', mcnemar_res['chi2'])
+print('p-valor:', mcnemar_res['p_value'])
+print('Diferença significativa (p < 0.05):', mcnemar_res['p_value'] < 0.05)
+
+# --- Code Cell 10 ---
+stat_report = pd.DataFrame([{
+    'metric': 'accuracy',
+    'ci_lower': ci_acc['lower'],
+    'ci_upper': ci_acc['upper'],
+    'ci_mean': ci_acc['mean'],
+    'mcnemar_p_value': mcnemar_res['p_value']
+}])
+save_result(stat_report, 'statistical_validation_report.parquet', subdir='5 - Results')
+print('Relatório estatístico salvo com sucesso!')
+
+======================================================================
+# NOTEBOOK: 4.2 - Analytics - Geospatial Diagnostic and Network Mapping.ipynb
+======================================================================
+
+# --- Code Cell 2 ---
+%config Completer.use_jedi = False
+%load_ext autoreload
+%autoreload 2
+
+import sys, os, warnings
+from pathlib import Path
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+warnings.filterwarnings('ignore')
+
+PROJECT_ROOT = Path.cwd() if Path.cwd().name == 'src' else Path.cwd() / 'src'
+sys.path.insert(0, str(PROJECT_ROOT.parent))
+
+from src.config import ROOT
+from src.visualization.plots import plot_station_map
+from src.data.loader import load_gauge_info
+from src.utils.logger import save_figure
+
+RESULTS_DIR = ROOT / 'src' / '5 - Results'
+FIGURES_DIR = ROOT / 'src' / '4 - Figures'
+
+# --- Code Cell 4 ---
+df_qc = pd.read_parquet(RESULTS_DIR / 'qc_classification_results.parquet')
+df_info = load_gauge_info()
+merged = pd.merge(df_info, df_qc[['gauge_code', 'hybrid_quality']].drop_duplicates(), on='gauge_code', how='inner')
+print(f'Estações georreferenciadas com classificação de qualidade: {len(merged):,}')
+merged.head()
+
+# --- Code Cell 6 ---
+fig, ax = plt.subplots(figsize=(10, 10))
+hq_pts = merged[merged['hybrid_quality'] == 'HQ']
+lq_pts = merged[merged['hybrid_quality'] == 'LQ']
+
+ax.scatter(hq_pts['long'], hq_pts['lat'], c='dodgerblue', s=12, label='Alta Qualidade (HQ)', alpha=0.7)
+ax.scatter(lq_pts['long'], lq_pts['lat'], c='crimson', s=14, label='Baixa Qualidade (LQ)', marker='x', alpha=0.8)
+ax.set_xlabel('Longitude')
+ax.set_ylabel('Latitude')
+ax.set_title('Rede Pluviométrica — Diagnóstico de Controle de Qualidade (QC-VORONOI)')
+ax.legend(loc='lower left', markerscale=2)
+ax.grid(True, linestyle=':', alpha=0.6)
+
+save_figure(fig, 'qc_spatial_diagnostic_map.png', subdir='4 - Figures')
+plt.show()

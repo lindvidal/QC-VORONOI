@@ -76,7 +76,10 @@ def save_result(
     filepath = target_dir / name
 
     if isinstance(df_or_path, pd.DataFrame):
-        df_or_path.to_csv(filepath, sep=sep, decimal=decimal, index=index)
+        if name.endswith(".parquet"):
+            df_or_path.to_parquet(filepath, index=index)
+        else:
+            df_or_path.to_csv(filepath, sep=sep, decimal=decimal, index=index)
         source_desc = f"DataFrame ({len(df_or_path)} rows)"
     elif isinstance(df_or_path, (str, Path)):
         src = Path(df_or_path)
